@@ -85,7 +85,7 @@ class TeiidDialect(PGDialect_psycopg2):
 
     def _get_server_version_info(self, connection):
         """
-        The TEIID uses PostgresSQL 8.2 dialect.
+        Returns the PostgresSQL 8.2 as TEIID's version.
         """
         return (8, 2)
 
