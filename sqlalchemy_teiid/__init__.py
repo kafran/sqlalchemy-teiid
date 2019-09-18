@@ -5,9 +5,10 @@
 # This project is a fork from https://github.com/ryncsn/sqlalchemy-teiid
 
 """
-A simple and hacky SQLAlchemy dialect for Teiid. 
-Not fully functional, only SELECT, JOIN and some 
-other simple query works.
+A simple and hacky SQLAlchemy dialect for Teiid.
+
+For more information on SQL Support please read
+https://teiid.gitbooks.io/documents/content/reference/SQL_Support.html
 """
 
 from __future__ import print_function
