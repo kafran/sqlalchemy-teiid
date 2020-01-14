@@ -12,6 +12,7 @@ https://teiid.gitbooks.io/documents/content/reference/SQL_Support.html
 
 from __future__ import print_function
 
+import datetime
 import json
 import logging
 import re
@@ -37,42 +38,14 @@ from sqlalchemy.types import (
     REAL,
     SMALLINT,
     TEXT,
-    TIME,
-    TIMESTAMP,
     VARBINARY,
     VARCHAR,
+    DECIMAL
 )
 
 from . import system_tables as systables
 
 logger = logging.getLogger("teiid")
-
-ischema_names = {
-    "string": VARCHAR,
-    "varchar": VARCHAR,
-    "varbinary": VARBINARY,
-    "char": CHAR,
-    "boolean": SMALLINT,
-    "byte": SMALLINT,
-    "tinyint": SMALLINT,
-    "short": SMALLINT,
-    "smallint": SMALLINT,
-    "integer": INTEGER,
-    "serial": INTEGER,
-    "long": BIGINT,
-    "bigint": BIGINT,
-    "biginteger": NUMERIC,
-    "float": FLOAT,
-    "real": REAL,
-    "double": FLOAT,
-    "bigdecimal": NUMERIC,
-    "decimal": NUMERIC,
-    "date": DATETIME,
-    "time": TIME,
-    "timestamp": TIMESTAMP,
-    "blob": BLOB,
-    "clob": CLOB,
-}
 
 RESERVED_WORDS = set(
     [
@@ -254,6 +227,116 @@ RESERVED_WORDS = set(
     ]
 )
 
+# SQLAlchemy was unable to parse TEIID's DATE/TIME types.
+# This code was adapted from mssql dialect MSDate/TIME.
+# It checks for everything, and always filter bind parameters
+# into datetime objects (required by pyodbc, not sure about
+# other dialects).
+
+
+class _TEIIDDate(sqltypes.Date):
+    def bind_processor(self, dialect):
+        def process(value):
+            if type(value) == datetime.date:
+                return datetime.datetime(value.year, value.month, value.day)
+            else:
+                return value
+
+        return process
+
+    _reg = re.compile(r"(\d+)-(\d+)-(\d+)")
+
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if isinstance(value, datetime.datetime):
+                return value.date()
+            elif isinstance(value, util.string_types):
+                m = self._reg.match(value)
+                if not m:
+                    raise ValueError("could not parse %r as a date value" % (value,))
+                return datetime.date(*[int(x or 0) for x in m.groups()])
+            else:
+                return value
+
+        return process
+
+
+class TIME(sqltypes.TIME):
+    def __init__(self, precision=None, **kwargs):
+        self.precision = precision
+        super(TIME, self).__init__()
+
+    __zero_date = datetime.date(1900, 1, 1)
+
+    def bind_processor(self, dialect):
+        def process(value):
+            if isinstance(value, datetime.datetime):
+                value = datetime.datetime.combine(self.__zero_date, value.time())
+            elif isinstance(value, datetime.time):
+                value = datetime.datetime.combine(self.__zero_date, value)
+            return value
+
+        return process
+
+    _reg = re.compile(r"(\d+):(\d+):(\d+)(?:\.(\d{0,6}))?")
+
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if isinstance(value, datetime.datetime):
+                return value.time()
+            elif isinstance(value, util.string_types):
+                m = self._reg.match(value)
+                if not m:
+                    raise ValueError("could not parse %r as a time value" % (value,))
+                return datetime.time(*[int(x or 0) for x in m.groups()])
+            else:
+                return value
+
+        return process
+
+
+class _DateTimeBase(object):
+    def bind_processor(self, dialect):
+        def process(value):
+            if type(value) == datetime.date:
+                return datetime.datetime(value.year, value.month, value.day)
+            else:
+                return value
+
+        return process
+
+
+class _TEIIDDateTime(_DateTimeBase, sqltypes.DateTime):
+    pass
+
+
+ischema_names = {
+    "string": VARCHAR,
+    "varchar": VARCHAR,
+    "varbinary": VARBINARY,
+    "char": CHAR,
+    "boolean": SMALLINT,
+    "byte": SMALLINT,
+    "tinyint": SMALLINT,
+    "short": SMALLINT,
+    "smallint": SMALLINT,
+    "integer": INTEGER,
+    "serial": INTEGER,
+    "long": BIGINT,
+    "bigint": BIGINT,
+    "biginteger": NUMERIC,
+    "float": FLOAT,
+    "real": REAL,
+    "double": FLOAT,
+    "bigdecimal": DECIMAL,
+    "decimal": DECIMAL,
+    "date": DATE,
+    "time": TIME,
+    "timestamp": DATETIME,
+    "blob": BLOB,
+    "clob": CLOB,
+}
+
 
 class TeiidCompiler(PGCompiler_psycopg2):
     def visit_column(
@@ -306,6 +389,12 @@ class TeiidCompiler(PGCompiler_psycopg2):
 class TeiidDialect(PGDialect_psycopg2):
     statement_compiler = TeiidCompiler
 
+    colspecs = {
+        sqltypes.DateTime: _TEIIDDateTime,
+        sqltypes.Date: _TEIIDDate,
+        sqltypes.Time: TIME,
+    }
+
     ischema_names = ischema_names
 
     def __init__(self, *args, **kwargs):
@@ -335,7 +424,7 @@ class TeiidDialect(PGDialect_psycopg2):
         tables = systables.tables
         s = sql.select(
             [tables.c.table_name],
-            sql.and_(tables.c.table_schema == schema, tables.c.table_type == "Table",),
+            sql.and_(tables.c.table_schema == schema, tables.c.table_type == "Table"),
             order_by=[tables.c.table_name],
         )
         table_names = [r[0] for r in connection.execute(s)]
@@ -368,7 +457,7 @@ class TeiidDialect(PGDialect_psycopg2):
         s = sql.select(
             [columns],
             sql.and_(
-                columns.c.table_name == table_name, columns.c.table_schema == schema,
+                columns.c.table_name == table_name, columns.c.table_schema == schema
             ),
             order_by=[columns.c.ordinal_position],
         )
